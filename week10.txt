@@ -1,0 +1,217 @@
+//lib/authenticate.js
+import jwt_decode from "jwt-decode";
+function setToken(token){
+  localStorage.setItem('access_token', token);
+}
+export function getToken(){
+    return localStorage.getItem('access_token');
+}
+export function readToken(){
+    const token = getToken();
+    return (token) ? jwt_decode(token) : null;
+}
+export function isAuthenticated(){
+  const token = readToken();  
+  return (token) ? true : false;
+}
+export function removeToken(){
+  localStorage.removeItem('access_token');
+}
+export async function authenticateUser(user, password) {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/login`, {
+    method: "POST",
+    body: JSON.stringify({ userName: user, password: password }),
+    headers: {
+      "content-type": "application/json"
+    }
+  });
+  const data = await res.json();
+  if(res.status === 200){
+    setToken(data.token);
+    return true;
+  }else{
+    throw new Error(data.message);
+  } 
+}
+//pages/_app.js
+import 'bootstrap/dist/css/bootstrap.min.css';
+import Layout from '../components/Layout';
+import  RouteGuard  from '../components/RouteGuard';
+function MyApp({ Component, pageProps }) {
+  return <RouteGuard><Layout><Component {...pageProps} /></Layout></RouteGuard>;
+}
+export default MyApp
+//pages/login.js
+import { Card, Form, Alert, Button } from "react-bootstrap";
+import { useState, useEffect } from 'react';
+import { authenticateUser } from "../lib/authenticate";
+import { useRouter } from 'next/router';
+export default function Login(props) {
+  const [warning, setWarning] = useState("");
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  const router = useRouter();
+  async function handleSubmit(e) {
+    e.preventDefault();
+    try{
+      await authenticateUser(user, password);
+      router.push("/vehicles");
+    }catch(err){
+     setWarning(err.message);
+    }
+  }
+  return (
+    <>
+      <Card bg="light">
+        <Card.Body>
+          <h2>Login</h2>
+          Enter your login information below:
+        </Card.Body>
+      </Card>
+      <br />
+      <Form onSubmit={handleSubmit}>
+        <Form.Group >
+          <Form.Label>User:</Form.Label>
+          <Form.Control type="text" value={user} id="userName" name="userName" onChange={e => setUser(e.target.value)} />
+        </Form.Group>
+        <br />
+        <Form.Group>
+          <Form.Label>Password:</Form.Label>
+          <Form.Control type="password" value={password} id="password" name="password" onChange={e => setPassword(e.target.value)} />
+        </Form.Group  >
+        {warning && <>
+          <br />
+          <Alert variant='danger'>
+            {warning}
+          </Alert>
+        </>}
+        <br />
+        <Button variant="primary" className="pull-right" type="submit">Login</Button>
+      </Form>
+    </>
+  );
+}
+//components/RouteGuard.js
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
+import { isAuthenticated } from '../lib/authenticate';
+const PUBLIC_PATHS = ['/login', '/', '/_error'];
+export default function RouteGuard(props) {
+    const router = useRouter();
+    const [authorized, setAuthorized] = useState(false);
+    useEffect(() => {
+        // on initial load - run auth check 
+        authCheck(router.pathname);
+        // on route change complete - run auth check 
+        router.events.on('routeChangeComplete', authCheck)
+        // unsubscribe from events in useEffect return function
+        return () => {
+            router.events.off('routeChangeComplete', authCheck);
+        }
+    }, []);
+    function authCheck(url) {
+        // redirect to login page if accessing a private page and not logged in 
+        const path = url.split('?')[0];
+        if (!isAuthenticated() && !PUBLIC_PATHS.includes(path)) {
+            setAuthorized(false);
+            router.push("/login");
+        } else {
+            setAuthorized(true);
+        }
+    }
+    return (
+      <>
+        {authorized && props.children}
+      </>
+    )
+}
+//components/Navigation.js
+import { Container, Navbar, Nav } from "react-bootstrap";
+import Link from 'next/link';
+import { useRouter } from "next/router";
+import { readToken, removeToken } from "../lib/authenticate";
+export default function Navigation(props) {
+  const router = useRouter();
+  let token = readToken();
+  function logout() {
+    removeToken();
+    router.push("/");
+  }
+  return (
+    <Navbar bg="light" expand="lg">
+      <Container>
+        <Link href="/" passHref legacyBehavior><Navbar.Brand >Vehicles UI {token && <>- Welcome {token.userName}</>}</Navbar.Brand></Link>
+        <Navbar.Toggle aria-controls="basic-navbar-nav" />
+        <Navbar.Collapse id="basic-navbar-nav">
+          <Nav className="me-auto">
+            <Link href="/" passHref legacyBehavior ><Nav.Link>Home</Nav.Link></Link>
+            {token && <Link href="/vehicles" passHref legacyBehavior><Nav.Link>Vehicles</Nav.Link></Link>}
+          </Nav>
+          <Nav className="ml-auto">
+            {!token && <Link href="/login" passHref legacyBehavior><Nav.Link>Login</Nav.Link></Link>}
+            {token && <Nav.Link onClick={logout}>Logout</Nav.Link>}
+          </Nav>
+        </Navbar.Collapse>
+      </Container>
+    </Navbar>
+  );
+}
+//components/Layout.js
+import {Container, Row, Col} from 'react-bootstrap';
+import Navigation from './Navigation';
+export default function Layout(props){
+  return (
+    <>
+    <Navigation></Navigation><br />
+      <Container>
+        <Row>
+          <Col>
+            {props.children}
+          </Col>
+        </Row>
+      </Container>
+    </>
+  );
+}
+//pages/vehicle.js
+import { Card, Table } from "react-bootstrap";
+import { getToken } from "../lib/authenticate";
+import useSWR from 'swr';
+const fetcher = (url) => fetch(url, { headers: { Authorization: `JWT ${getToken()}` }}).then((res) => res.json());
+export default function Vehicles() {
+    const { data, error } = useSWR(`${process.env.NEXT_PUBLIC_API_URL}/vehicles`, fetcher);
+    return (
+      <>
+        <Card bg="light">
+          <Card.Body>
+            <h2>Vehicles</h2>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vestibulum nec volutpat ante.
+          </Card.Body>
+        </Card>
+        <br />
+        <Table striped bordered>
+          <thead>
+            <tr>
+              <th>Year</th>
+              <th>Make</th>
+              <th>Model</th>
+              <th>Vin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data?.map(vehicle => (
+              <tr key={vehicle.id} >
+                <td>{vehicle.year}</td>
+                <td>{vehicle.make}</td>
+                <td>{vehicle.model}</td>
+                <td>{vehicle.vin}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </>
+    )
+}
+
+//.env
+NEXT_PUBLIC_API_URL="http://localhost:8080/api"
